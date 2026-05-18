@@ -1,0 +1,9 @@
+<resources>
+    <color name="green_primary">#078B3E</color>
+    <color name="green_dark">#05652F</color>
+    <color name="blue_primary">#1565C0</color>
+    <color name="red_alert">#E53935</color>
+    <color name="orange_alert">#F59E0B</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="background">#F7FAF8</color>
+</resources>
