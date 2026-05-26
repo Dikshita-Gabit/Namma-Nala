@@ -1,9 +1,13 @@
 package com.example.nammanala
 
+import android.content.Context
 import android.os.Bundle
+import android.util.Patterns
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -31,7 +35,9 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Construction
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
@@ -61,6 +67,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -74,13 +81,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.edit
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -91,9 +101,26 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class AppScreen {
-    Splash, Login, Home, BreachPhoto, BreachLocation, BreachDetails, Submitted,
-    Map, WaterStatus, Maintenance, SiltAlert, Alerts, Profile
+    Splash, Login, Register, VerifyEmail, Home, BreachPhoto, BreachLocation, BreachDetails, Submitted,
+    Map, WaterStatus, Maintenance, SiltAlert, Alerts, Profile, ReportHistory
 }
+
+private data class UserProfile(
+    val name: String,
+    val phone: String,
+    val email: String,
+    val occupation: String,
+    val village: String
+)
+
+private data class WaterStatusItem(
+    val id: Int,
+    val village: String,
+    val status: String,
+    val time: String,
+    val badge: String,
+    val color: Color
+)
 
 private val Green = Color(0xFF078B3E)
 private val GreenDark = Color(0xFF05652F)
@@ -108,8 +135,20 @@ private val Muted = Color(0xFF66727A)
 
 @Composable
 private fun NammaNalaApp() {
+    val context = LocalContext.current
+    var userProfile by remember { mutableStateOf(loadUserProfile(context)) }
+    var pendingProfile by remember { mutableStateOf<UserProfile?>(null) }
     var screen by remember { mutableStateOf(AppScreen.Splash) }
     val go: (AppScreen) -> Unit = { screen = it }
+
+    val waterStatuses = remember {
+        mutableStateListOf(
+            WaterStatusItem(1, "Hulikere", "Water reached", "Today, 08:30 AM", "Water Reached", Blue),
+            WaterStatusItem(2, "Kudur", "Water not reached", "Today, 07:15 AM", "Not Reached", Orange),
+            WaterStatusItem(3, "Vehwala", "Water reached", "Yesterday, 06:45 PM", "Water Reached", Blue),
+            WaterStatusItem(4, "Mallasandra", "Water reached", "Yesterday, 05:30 PM", "Water Reached", Blue)
+        )
+    }
 
     MaterialTheme(
         colorScheme = lightColorScheme(
@@ -122,22 +161,58 @@ private fun NammaNalaApp() {
     ) {
         Surface(Modifier.fillMaxSize(), color = Bg) {
             BackHandler(screen !in listOf(AppScreen.Splash, AppScreen.Login, AppScreen.Home)) {
-                screen = AppScreen.Home
+                screen = when (screen) {
+                    AppScreen.Register -> AppScreen.Login
+                    AppScreen.VerifyEmail -> AppScreen.Register
+                    else -> AppScreen.Home
+                }
             }
             when (screen) {
-                AppScreen.Splash -> SplashScreen { go(AppScreen.Login) }
-                AppScreen.Login -> LoginScreen { go(AppScreen.Home) }
-                AppScreen.Home -> HomeScreen(go)
+                AppScreen.Splash -> SplashScreen {
+                    go(if (userProfile == null) AppScreen.Login else AppScreen.Home)
+                }
+                AppScreen.Login -> LoginScreen(
+                    onLogin = { profile ->
+                        saveUserProfile(context, profile)
+                        userProfile = profile
+                        go(AppScreen.Home)
+                    },
+                    onRegister = { go(AppScreen.Register) }
+                )
+                AppScreen.Register -> RegisterScreen(
+                    onBack = { go(AppScreen.Login) },
+                    onContinue = { profile ->
+                        pendingProfile = profile
+                        go(AppScreen.VerifyEmail)
+                    }
+                )
+                AppScreen.VerifyEmail -> VerifyEmailScreen(
+                    email = pendingProfile?.email.orEmpty(),
+                    onBack = { go(AppScreen.Register) },
+                    onVerified = {
+                        val verifiedProfile = pendingProfile ?: defaultUserProfile()
+                        saveUserProfile(context, verifiedProfile)
+                        userProfile = verifiedProfile
+                        pendingProfile = null
+                        go(AppScreen.Home)
+                    }
+                )
+                AppScreen.Home -> HomeScreen(go, userProfile ?: defaultUserProfile())
                 AppScreen.BreachPhoto -> BreachPhotoScreen(go)
                 AppScreen.BreachLocation -> BreachLocationScreen(go)
                 AppScreen.BreachDetails -> BreachDetailsScreen(go)
                 AppScreen.Submitted -> SubmittedScreen(go)
                 AppScreen.Map -> MapScreen(go)
-                AppScreen.WaterStatus -> WaterStatusScreen(go)
+                AppScreen.WaterStatus -> WaterStatusScreen(go, waterStatuses)
                 AppScreen.Maintenance -> MaintenanceScreen(go)
                 AppScreen.SiltAlert -> SiltAlertScreen(go)
                 AppScreen.Alerts -> AlertsScreen(go)
-                AppScreen.Profile -> ProfileScreen(go)
+                AppScreen.ReportHistory -> ReportHistoryScreen(go)
+                AppScreen.Profile -> ProfileScreen(go, userProfile ?: defaultUserProfile()) {
+                    clearUserProfile(context)
+                    userProfile = null
+                    go(AppScreen.Login)
+                }
             }
         }
     }
@@ -178,15 +253,21 @@ private fun SplashScreen(onDone: () -> Unit) {
 }
 
 @Composable
-private fun LoginScreen(onLogin: () -> Unit) {
+private fun LoginScreen(onLogin: (UserProfile) -> Unit, onRegister: () -> Unit) {
+    var phone by remember { mutableStateOf("+91 9876543210") }
+    var password by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf("") }
+    var selectedLanguage by remember { mutableStateOf("English") }
+    val context = LocalContext.current
+
     ScreenColumn {
         Spacer(Modifier.height(20.dp))
         Text("Welcome Back!", fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth())
         Text("Login to continue", color = Muted, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(24.dp))
         OutlinedTextField(
-            value = "+91 9876543210",
-            onValueChange = {},
+            value = phone,
+            onValueChange = { phone = it },
             label = { Text("Phone number") },
             leadingIcon = { Icon(Icons.Default.Phone, null) },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
@@ -194,29 +275,38 @@ private fun LoginScreen(onLogin: () -> Unit) {
         )
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
-            value = "password",
-            onValueChange = {},
+            value = password,
+            onValueChange = { password = it },
             label = { Text("Password") },
             leadingIcon = { Icon(Icons.Default.Lock, null) },
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth()
         )
-        TextButton(onClick = {}, modifier = Modifier.fillMaxWidth()) {
+        if (error.isNotBlank()) {
+            Text(error, color = Red, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+        }
+        TextButton(onClick = { Toast.makeText(context, "Password reset link sent to your phone", Toast.LENGTH_SHORT).show() }, modifier = Modifier.fillMaxWidth()) {
             Text("Forgot Password?", color = GreenDark)
         }
-        PrimaryButton("Login", onLogin)
+        PrimaryButton("Login") {
+            if (phone.trim().length < 10 || password.length < 4) {
+                error = "Enter a valid phone number and password."
+            } else {
+                onLogin(defaultUserProfile(phone = phone.trim()))
+            }
+        }
         Spacer(Modifier.height(10.dp))
-        Row(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().clickable(onClick = onRegister), horizontalArrangement = Arrangement.Center) {
             Text("Don't have an account? ")
             Text("Register", color = GreenDark, fontWeight = FontWeight.Bold)
         }
         Divider(Modifier.padding(vertical = 20.dp))
-        OutlinedButton(onClick = {}, modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(onClick = { Toast.makeText(context, "Google Login not implemented", Toast.LENGTH_SHORT).show() }, modifier = Modifier.fillMaxWidth()) {
             Text("G", color = Blue, fontWeight = FontWeight.Black)
             Spacer(Modifier.width(12.dp))
             Text("Login with Google", color = Ink)
         }
-        OutlinedButton(onClick = {}, modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(onClick = { Toast.makeText(context, "Phone Login not implemented", Toast.LENGTH_SHORT).show() }, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Default.Phone, null, tint = Ink)
             Spacer(Modifier.width(12.dp))
             Text("Login with Phone", color = Ink)
@@ -230,19 +320,108 @@ private fun LoginScreen(onLogin: () -> Unit) {
                 .padding(14.dp),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            Text("English", fontWeight = FontWeight.Bold)
-            Text("Kannada", color = Muted)
+            Text("English", fontWeight = if (selectedLanguage == "English") FontWeight.Bold else FontWeight.Normal, modifier = Modifier.clickable { selectedLanguage = "English" })
+            Text("Kannada", color = if (selectedLanguage == "Kannada") GreenDark else Muted, fontWeight = if (selectedLanguage == "Kannada") FontWeight.Bold else FontWeight.Normal, modifier = Modifier.clickable { selectedLanguage = "Kannada" })
         }
     }
 }
 
 @Composable
-private fun HomeScreen(go: (AppScreen) -> Unit) {
+private fun RegisterScreen(onBack: () -> Unit, onContinue: (UserProfile) -> Unit) {
+    var name by remember { mutableStateOf("") }
+    var occupation by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    var village by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf("") }
+
+    ScreenColumn {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) }
+            Text("Create Account", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        }
+        Text("Step 1: Enter your user information", color = Muted)
+        Spacer(Modifier.height(18.dp))
+        OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Full name") }, leadingIcon = { Icon(Icons.Default.AccountCircle, null) }, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(value = occupation, onValueChange = { occupation = it }, label = { Text("Occupation") }, leadingIcon = { Icon(Icons.Default.Description, null) }, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(value = phone, onValueChange = { phone = it }, label = { Text("Phone number") }, leadingIcon = { Icon(Icons.Default.Phone, null) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Email address") }, leadingIcon = { Icon(Icons.Default.Email, null) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(value = village, onValueChange = { village = it }, label = { Text("Village / Area") }, leadingIcon = { Icon(Icons.Default.LocationOn, null) }, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Create password") }, leadingIcon = { Icon(Icons.Default.Lock, null) }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+        if (error.isNotBlank()) {
+            Text(error, color = Red, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+        }
+        Spacer(Modifier.height(20.dp))
+        PrimaryButton("Continue to Email Verification") {
+            error = when {
+                name.isBlank() -> "Enter your full name."
+                occupation.isBlank() -> "Enter your occupation."
+                phone.trim().length < 10 -> "Enter a valid phone number."
+                !Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches() -> "Enter a valid email address."
+                village.isBlank() -> "Enter your village or area."
+                password.length < 4 -> "Password must be at least 4 characters."
+                else -> ""
+            }
+            if (error.isBlank()) {
+                onContinue(UserProfile(name.trim(), phone.trim(), email.trim(), occupation.trim(), village.trim()))
+            }
+        }
+    }
+}
+
+@Composable
+private fun VerifyEmailScreen(email: String, onBack: () -> Unit, onVerified: () -> Unit) {
+    var code by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf("") }
+
+    ScreenColumn {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) }
+            Text("Verify Email", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        }
+        Text("Step 2: Enter the verification code sent to", color = Muted)
+        Text(email.ifBlank { "your email" }, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(22.dp))
+        InfoCard {
+            Text("Demo verification code", color = Muted, fontWeight = FontWeight.Bold)
+            Text("123456", fontSize = 26.sp, fontWeight = FontWeight.Black, color = GreenDark)
+        }
+        Spacer(Modifier.height(16.dp))
+        OutlinedTextField(
+            value = code,
+            onValueChange = { code = it },
+            label = { Text("Verification code") },
+            leadingIcon = { Icon(Icons.Default.Email, null) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (error.isNotBlank()) {
+            Text(error, color = Red, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+        }
+        Spacer(Modifier.height(20.dp))
+        PrimaryButton("Verify and Open App") {
+            if (code.trim() == "123456") {
+                onVerified()
+            } else {
+                error = "Enter the correct verification code."
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeScreen(go: (AppScreen) -> Unit, user: UserProfile) {
     AppScaffold(active = AppScreen.Home, go = go) {
-        GreenHeader("Namma-Nala", trailing = "28 C")
+        GreenHeader("Namma-Nala", trailing = "28 C", onNotificationClick = { go(AppScreen.Alerts) })
         ScreenColumn(noTopPadding = true) {
-            Text("Hello, Ramesh!", fontSize = 21.sp, fontWeight = FontWeight.Bold)
-            Text("Hulikere Village", color = Muted)
+            Text("Hello, ${user.name}!", fontSize = 21.sp, fontWeight = FontWeight.Bold)
+            Text(user.village, color = Muted)
             Spacer(Modifier.height(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                 DashboardCard("Breach\nReport", Icons.Outlined.Warning, Red, Modifier.weight(1f)) { go(AppScreen.BreachPhoto) }
@@ -254,9 +433,9 @@ private fun HomeScreen(go: (AppScreen) -> Unit) {
                 DashboardCard("Silt\nAlert", Icons.Default.Cloud, Brown, Modifier.weight(1f)) { go(AppScreen.SiltAlert) }
             }
             Spacer(Modifier.height(22.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("Recent Updates", fontWeight = FontWeight.Bold)
-                Text("View All", color = GreenDark, fontSize = 13.sp)
+                Text("View All", color = GreenDark, fontSize = 13.sp, modifier = Modifier.clickable { go(AppScreen.Alerts) })
             }
             UpdateRow("Water reached Hulikere", "Today, 08:30 AM", Green)
             UpdateRow("Silt alert near Milestone 12", "Today, 07:15 AM", Red)
@@ -284,6 +463,7 @@ private fun BreachLocationScreen(go: (AppScreen) -> Unit) {
         Spacer(Modifier.height(10.dp))
         MapDrawing(Modifier.fillMaxWidth().height(210.dp))
         InfoCard {
+            Text("Place Name  : Hulikere Canal Section A", fontWeight = FontWeight.Bold, color = GreenDark)
             Text("Latitude     : 12.985123")
             Text("Longitude  : 77.345678")
             Text("Accuracy   : 8.5 m")
@@ -297,23 +477,26 @@ private fun BreachLocationScreen(go: (AppScreen) -> Unit) {
 
 @Composable
 private fun BreachDetailsScreen(go: (AppScreen) -> Unit) {
+    var selectedSeverity by remember { mutableStateOf("High") }
+    var description by remember { mutableStateOf("Water is leaking from the canal wall near milestone 13. Flow is reduced.") }
+
     ReportShell(step = 3, go = go) {
         Text("Issue Type", fontWeight = FontWeight.Bold)
         Selector("Leak / Breach")
         Spacer(Modifier.height(12.dp))
         Text("Description", fontWeight = FontWeight.Bold)
         OutlinedTextField(
-            value = "Water is leaking from the canal wall near milestone 13. Flow is reduced.",
-            onValueChange = {},
+            value = description,
+            onValueChange = { description = it },
             minLines = 4,
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(Modifier.height(12.dp))
         Text("Severity", fontWeight = FontWeight.Bold)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            SeverityChip("Low", false, Modifier.weight(1f))
-            SeverityChip("Medium", false, Modifier.weight(1f))
-            SeverityChip("High", true, Modifier.weight(1f))
+            SeverityChip("Low", selectedSeverity == "Low", Modifier.weight(1f)) { selectedSeverity = "Low" }
+            SeverityChip("Medium", selectedSeverity == "Medium", Modifier.weight(1f)) { selectedSeverity = "Medium" }
+            SeverityChip("High", selectedSeverity == "High", Modifier.weight(1f)) { selectedSeverity = "High" }
         }
         Spacer(Modifier.height(24.dp))
         PrimaryButton("Submit Report") { go(AppScreen.Submitted) }
@@ -338,8 +521,12 @@ private fun SubmittedScreen(go: (AppScreen) -> Unit) {
         Text("Report ID", color = Muted, fontWeight = FontWeight.Bold)
         Text("BR2024051478", fontSize = 22.sp, fontWeight = FontWeight.Black)
         Spacer(Modifier.height(32.dp))
-        PrimaryButton("View Report") { go(AppScreen.Alerts) }
-        OutlinedButton(onClick = { go(AppScreen.Home) }, modifier = Modifier.fillMaxWidth()) {
+        PrimaryButton("View Report History") { go(AppScreen.ReportHistory) }
+        OutlinedButton(
+            onClick = { go(AppScreen.Home) },
+            modifier = Modifier.fillMaxWidth(),
+            border = BorderStroke(1.dp, Green)
+        ) {
             Text("Back to Home", color = GreenDark)
         }
     }
@@ -347,10 +534,11 @@ private fun SubmittedScreen(go: (AppScreen) -> Unit) {
 
 @Composable
 private fun MapScreen(go: (AppScreen) -> Unit) {
+    var activeFilter by remember { mutableStateOf("All") }
     AppScaffold(active = AppScreen.Map, go = go) {
         TitleBar("Canal Map")
         ScreenColumn(noTopPadding = true) {
-            FilterRow(listOf("All", "Breach", "Silt Alert", "Maintenance"))
+            FilterRow(listOf("All", "Breach", "Silt Alert", "Maintenance"), activeFilter) { activeFilter = it }
             MapDrawing(Modifier.fillMaxWidth().height(420.dp), overview = true)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
                 Legend("Breach", Red)
@@ -363,39 +551,52 @@ private fun MapScreen(go: (AppScreen) -> Unit) {
 }
 
 @Composable
-private fun WaterStatusScreen(go: (AppScreen) -> Unit) {
+private fun WaterStatusScreen(go: (AppScreen) -> Unit, statuses: MutableList<WaterStatusItem>) {
+    val context = LocalContext.current
     AppScaffold(active = AppScreen.Home, go = go) {
         TitleBar("Water Status")
         ScreenColumn(noTopPadding = true) {
-            Selector("Search village")
-            StatusRow("Hulikere", "Water reached", "Today, 08:30 AM", "Water Reached", Blue)
-            StatusRow("Kudur", "Water not reached", "Today, 07:15 AM", "Not Reached", Orange)
-            StatusRow("Vehwala", "Water reached", "Yesterday, 06:45 PM", "Water Reached", Blue)
-            StatusRow("Mallasandra", "Water reached", "Yesterday, 05:30 PM", "Water Reached", Blue)
+            Selector("Search village") { Toast.makeText(context, "Search functionality not implemented", Toast.LENGTH_SHORT).show() }
+            statuses.forEach { item ->
+                StatusRow(item.village, item.status, item.time, item.badge, item.color) {
+                    statuses.remove(item)
+                    Toast.makeText(context, "Status deleted", Toast.LENGTH_SHORT).show()
+                }
+            }
+            if (statuses.isEmpty()) {
+                Text("No water status reports", modifier = Modifier.fillMaxWidth().padding(20.dp), textAlign = TextAlign.Center, color = Muted)
+            }
             Spacer(Modifier.height(12.dp))
-            PrimaryButton("Add Water Status") {}
+            PrimaryButton("Add Water Status") { Toast.makeText(context, "Feature coming soon", Toast.LENGTH_SHORT).show() }
         }
     }
 }
 
 @Composable
 private fun MaintenanceScreen(go: (AppScreen) -> Unit) {
+    var activeTab by remember { mutableStateOf("Upcoming") }
     AppScaffold(active = AppScreen.Home, go = go) {
         TitleBar("Maintenance Tracker")
         ScreenColumn(noTopPadding = true) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                FilledTab("Upcoming", true, Modifier.weight(1f))
-                FilledTab("Completed", false, Modifier.weight(1f))
+                FilledTab("Upcoming", activeTab == "Upcoming", Modifier.weight(1f)) { activeTab = "Upcoming" }
+                FilledTab("Completed", activeTab == "Completed", Modifier.weight(1f)) { activeTab = "Completed" }
             }
-            MaintenanceItem("Section 1 (Milestone 1-5)", "Desilting", "25 May 2024")
-            MaintenanceItem("Section 5 (Milestone 21-25)", "Weed Removal", "30 May 2024")
-            MaintenanceItem("Section 8 (Milestone 36-40)", "Desilting", "05 June 2024")
+            if (activeTab == "Upcoming") {
+                MaintenanceItem("Section 1 (Milestone 1-5)", "Desilting", "25 May 2024")
+                MaintenanceItem("Section 5 (Milestone 21-25)", "Weed Removal", "30 May 2024")
+                MaintenanceItem("Section 8 (Milestone 36-40)", "Desilting", "05 June 2024")
+            } else {
+                MaintenanceItem("Section 2 (Milestone 6-10)", "Gate Repair", "10 May 2024", isCompleted = true)
+                MaintenanceItem("Section 3 (Milestone 11-15)", "Desilting", "05 May 2024", isCompleted = true)
+            }
         }
     }
 }
 
 @Composable
 private fun SiltAlertScreen(go: (AppScreen) -> Unit) {
+    var description by remember { mutableStateOf("Heavy silt accumulation reducing water flow.") }
     AppScaffold(active = AppScreen.Home, go = go) {
         TitleBar("Silt Alert")
         ScreenColumn(noTopPadding = true) {
@@ -409,8 +610,8 @@ private fun SiltAlertScreen(go: (AppScreen) -> Unit) {
             }
             Text("Description", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
             OutlinedTextField(
-                value = "Heavy silt accumulation reducing water flow.",
-                onValueChange = {},
+                value = description,
+                onValueChange = { description = it },
                 minLines = 3,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -422,20 +623,56 @@ private fun SiltAlertScreen(go: (AppScreen) -> Unit) {
 
 @Composable
 private fun AlertsScreen(go: (AppScreen) -> Unit) {
+    var activeFilter by remember { mutableStateOf("All") }
     AppScaffold(active = AppScreen.Alerts, go = go) {
-        TitleBar("Alerts")
+        TitleBar("Alerts & Updates")
         ScreenColumn(noTopPadding = true) {
-            FilterRow(listOf("All", "Reports", "Updates", "System"))
-            AlertRow(Icons.Outlined.Warning, Green, "Your breach report BR2024051478 is under review", "Today, 09:15 AM")
-            AlertRow(Icons.Default.LocationOn, Blue, "Maintenance scheduled in your section (Milestone 1-5)", "Today, 08:00 AM")
-            AlertRow(Icons.Default.WaterDrop, Blue, "Water reached Hulikere", "Today, 06:30 AM")
-            AlertRow(Icons.Default.Cloud, Brown, "Silt alert reported near Milestone 22", "Yesterday, 05:40 PM")
+            FilterRow(listOf("All", "Reports", "Updates", "System"), activeFilter) { activeFilter = it }
+            AlertRow(Icons.Outlined.Warning, Green, "Your breach report BR2024051478 is under review", "Today, 09:15 AM") { go(AppScreen.ReportHistory) }
+            AlertRow(Icons.Default.LocationOn, Blue, "Maintenance scheduled in your section (Milestone 1-5)", "Today, 08:00 AM") { go(AppScreen.ReportHistory) }
+            AlertRow(Icons.Default.WaterDrop, Blue, "Water reached Hulikere", "Today, 06:30 AM") { go(AppScreen.ReportHistory) }
+            AlertRow(Icons.Default.Cloud, Brown, "Silt alert reported near Milestone 22", "Yesterday, 05:40 PM") { go(AppScreen.ReportHistory) }
         }
     }
 }
 
 @Composable
-private fun ProfileScreen(go: (AppScreen) -> Unit) {
+private fun ReportHistoryScreen(go: (AppScreen) -> Unit) {
+    AppScaffold(active = AppScreen.Alerts, go = go) {
+        TitleBar("Report History")
+        ScreenColumn(noTopPadding = true) {
+            Text("Your Submitted Reports", fontWeight = FontWeight.Bold, color = Muted, modifier = Modifier.padding(bottom = 12.dp))
+            ReportHistoryItem("BR2024051478", "Breach Report", "Hulikere Canal Section A", "Under Review", Green)
+            ReportHistoryItem("SL2024051205", "Silt Alert", "Milestone 22 area", "Resolved", Blue)
+            ReportHistoryItem("BR2024050812", "Breach Report", "Section 5 - Kudur", "Action Taken", Orange)
+            Spacer(Modifier.height(20.dp))
+            OutlinedButton(onClick = { go(AppScreen.Home) }, modifier = Modifier.fillMaxWidth()) {
+                Text("Back to Dashboard", color = GreenDark)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReportHistoryItem(id: String, type: String, loc: String, status: String, color: Color) {
+    Card(Modifier.fillMaxWidth().padding(vertical = 6.dp), colors = CardDefaults.cardColors(Color.White), border = BorderStroke(1.dp, Line)) {
+        Column(Modifier.padding(14.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(type, fontWeight = FontWeight.Bold)
+                Text(id, fontSize = 12.sp, color = Muted)
+            }
+            Text(loc, color = Muted, fontSize = 14.sp)
+            Spacer(Modifier.height(8.dp))
+            Box(Modifier.clip(RoundedCornerShape(4.dp)).background(color.copy(alpha = 0.1f)).padding(horizontal = 8.dp, vertical = 4.dp)) {
+                Text(status, color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileScreen(go: (AppScreen) -> Unit, user: UserProfile, onLogout: () -> Unit) {
+    val context = LocalContext.current
     AppScaffold(active = AppScreen.Profile, go = go) {
         TitleBar("Profile")
         ScreenColumn(noTopPadding = true) {
@@ -443,20 +680,26 @@ private fun ProfileScreen(go: (AppScreen) -> Unit) {
                 Icon(Icons.Default.AccountCircle, null, tint = Blue, modifier = Modifier.size(72.dp))
                 Spacer(Modifier.width(14.dp))
                 Column {
-                    Text("Ramesh", fontSize = 21.sp, fontWeight = FontWeight.Bold)
-                    Text("Farmer", color = Muted)
-                    Text("Hulikere Village", color = Muted)
+                    Text(user.name, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                    Text(user.occupation, color = Muted)
+                    Text(user.village, color = Muted)
                 }
             }
             Divider(Modifier.padding(vertical = 16.dp))
-            MenuRow(Icons.Default.Description, "My Reports")
-            MenuRow(Icons.Default.Notifications, "My Alerts")
-            MenuRow(Icons.Default.WaterDrop, "Water Status History")
-            MenuRow(Icons.Default.Settings, "Settings")
-            MenuRow(Icons.Outlined.Info, "Help & Support")
-            MenuRow(Icons.Outlined.Info, "About Us")
+            InfoCard {
+                Text("Phone: ${user.phone}")
+                Text("Email: ${user.email}")
+                Text("Email status: Verified", color = GreenDark, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(12.dp))
+            MenuRow(Icons.Default.Description, "My Reports") { go(AppScreen.ReportHistory) }
+            MenuRow(Icons.Default.Notifications, "My Alerts") { go(AppScreen.Alerts) }
+            MenuRow(Icons.Default.WaterDrop, "Water Status History") { go(AppScreen.WaterStatus) }
+            MenuRow(Icons.Default.Settings, "Settings") { Toast.makeText(context, "Settings coming soon", Toast.LENGTH_SHORT).show() }
+            MenuRow(Icons.Outlined.Info, "Help & Support") { Toast.makeText(context, "Support desk opening soon", Toast.LENGTH_SHORT).show() }
+            MenuRow(Icons.Outlined.Info, "About Us") { Toast.makeText(context, "Namma Nala v1.0", Toast.LENGTH_SHORT).show() }
             Spacer(Modifier.height(20.dp))
-            TextButton(onClick = { go(AppScreen.Login) }, modifier = Modifier.fillMaxWidth()) {
+            TextButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Outlined.Logout, null, tint = Red)
                 Spacer(Modifier.width(8.dp))
                 Text("Logout", color = Red)
@@ -508,13 +751,15 @@ private fun ScreenColumn(
 }
 
 @Composable
-private fun GreenHeader(title: String, trailing: String) {
+private fun GreenHeader(title: String, trailing: String, onNotificationClick: () -> Unit = {}) {
     Row(
         Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(GreenDark, Green))).padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-        Icon(Icons.Default.Notifications, null, tint = Color.White)
+        IconButton(onClick = onNotificationClick) {
+            Icon(Icons.Default.Notifications, null, tint = Color.White)
+        }
         Spacer(Modifier.width(10.dp))
         Text(trailing, color = Color.White)
     }
@@ -627,9 +872,9 @@ private fun Tip(text: String) {
 }
 
 @Composable
-private fun Selector(text: String) {
+private fun Selector(text: String, onClick: () -> Unit = {}) {
     Row(
-        Modifier.fillMaxWidth().height(50.dp).clip(RoundedCornerShape(8.dp)).border(1.dp, Line, RoundedCornerShape(8.dp)).padding(horizontal = 14.dp),
+        Modifier.fillMaxWidth().height(50.dp).clip(RoundedCornerShape(8.dp)).border(1.dp, Line, RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(text, color = if (text == "Search village") Muted else Ink, modifier = Modifier.weight(1f))
@@ -638,58 +883,65 @@ private fun Selector(text: String) {
 }
 
 @Composable
-private fun SeverityChip(text: String, selected: Boolean, modifier: Modifier) {
+private fun SeverityChip(text: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
     Box(
-        modifier.height(42.dp).clip(RoundedCornerShape(7.dp)).background(if (selected) Red else Color.White).border(1.dp, Line, RoundedCornerShape(7.dp)),
+        modifier.height(42.dp).clip(RoundedCornerShape(7.dp)).background(if (selected) Red else Color.White).border(1.dp, if (selected) Red else Line, RoundedCornerShape(7.dp)).clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) { Text(text, color = if (selected) Color.White else Ink, fontWeight = FontWeight.Bold) }
 }
 
 @Composable
-private fun FilledTab(text: String, selected: Boolean, modifier: Modifier) {
+private fun FilledTab(text: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
     Box(
-        modifier.height(44.dp).clip(RoundedCornerShape(7.dp)).background(if (selected) Green else Color.White).border(1.dp, Line, RoundedCornerShape(7.dp)),
+        modifier.height(44.dp).clip(RoundedCornerShape(7.dp)).background(if (selected) Green else Color.White).border(1.dp, if (selected) Green else Line, RoundedCornerShape(7.dp)).clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) { Text(text, color = if (selected) Color.White else Ink, fontWeight = FontWeight.Bold) }
 }
 
 @Composable
-private fun FilterRow(items: List<String>) {
+private fun FilterRow(items: List<String>, selected: String, onSelect: (String) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
-        items.forEachIndexed { index, item ->
+        items.forEach { item ->
+            val isSelected = item == selected
             Box(
-                Modifier.weight(1f).height(38.dp).clip(RoundedCornerShape(7.dp)).background(if (index == 0) Green else Color.White).border(1.dp, Line, RoundedCornerShape(7.dp)),
+                Modifier.weight(1f).height(38.dp).clip(RoundedCornerShape(7.dp)).background(if (isSelected) Green else Color.White).border(1.dp, if (isSelected) Green else Line, RoundedCornerShape(7.dp)).clickable { onSelect(item) },
                 contentAlignment = Alignment.Center
-            ) { Text(item, color = if (index == 0) Color.White else Ink, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+            ) { Text(item, color = if (isSelected) Color.White else Ink, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
         }
     }
 }
 
 @Composable
-private fun StatusRow(village: String, status: String, time: String, badge: String, color: Color) {
+private fun StatusRow(village: String, status: String, time: String, badge: String, color: Color, onDelete: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(village, fontWeight = FontWeight.Bold)
             Text(status)
             Text(time, color = Muted, fontSize = 12.sp)
         }
-        Box(Modifier.clip(RoundedCornerShape(7.dp)).background(color).padding(horizontal = 12.dp, vertical = 8.dp)) {
-            Text(badge, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.clip(RoundedCornerShape(7.dp)).background(color).padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Text(badge, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.width(8.dp))
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Default.Delete, "Delete", tint = Red.copy(alpha = 0.7f))
+            }
         }
     }
     Divider(color = Line)
 }
 
 @Composable
-private fun MaintenanceItem(section: String, work: String, date: String) {
+private fun MaintenanceItem(section: String, work: String, date: String, isCompleted: Boolean = false) {
     Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(section, fontWeight = FontWeight.Bold)
             Text(work)
             Text(date)
         }
-        Box(Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFFFFF5D6)).padding(horizontal = 12.dp, vertical = 8.dp)) {
-            Text("Upcoming", color = Brown, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Box(Modifier.clip(RoundedCornerShape(8.dp)).background(if (isCompleted) Green.copy(alpha = 0.1f) else Color(0xFFFFF5D6)).padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Text(if (isCompleted) "Completed" else "Upcoming", color = if (isCompleted) Green else Brown, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
     }
     Divider(color = Line)
@@ -710,8 +962,8 @@ private fun UpdateRow(title: String, time: String, color: Color) {
 }
 
 @Composable
-private fun AlertRow(icon: ImageVector, color: Color, title: String, time: String) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 13.dp), verticalAlignment = Alignment.Top) {
+private fun AlertRow(icon: ImageVector, color: Color, title: String, time: String, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 13.dp), verticalAlignment = Alignment.Top) {
         Box(Modifier.size(38.dp).clip(CircleShape).background(color.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = color)
         }
@@ -725,8 +977,8 @@ private fun AlertRow(icon: ImageVector, color: Color, title: String, time: Strin
 }
 
 @Composable
-private fun MenuRow(icon: ImageVector, text: String) {
-    Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun MenuRow(icon: ImageVector, text: String, onClick: () -> Unit = {}) {
+    Row(Modifier.fillMaxWidth().height(52.dp).clickable(onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, null, tint = Ink)
         Spacer(Modifier.width(14.dp))
         Text(text, modifier = Modifier.weight(1f))
@@ -746,8 +998,9 @@ private fun Legend(text: String, color: Color) {
 
 @Composable
 private fun PhotoCard(kind: String) {
+    val context = LocalContext.current
     Box(
-        Modifier.fillMaxWidth().height(190.dp).clip(RoundedCornerShape(8.dp)).border(1.dp, Line, RoundedCornerShape(8.dp))
+        Modifier.fillMaxWidth().height(190.dp).clip(RoundedCornerShape(8.dp)).border(1.dp, Line, RoundedCornerShape(8.dp)).clickable { Toast.makeText(context, "Opening Camera...", Toast.LENGTH_SHORT).show() }
     ) {
         CanalProblemDrawing(kind, Modifier.fillMaxSize())
         Box(
@@ -825,6 +1078,17 @@ private fun MapDrawing(modifier: Modifier = Modifier, overview: Boolean = false)
             cubicTo(size.width * .70f, size.height * .45f, size.width * .65f, size.height * .20f, size.width * .90f, size.height * .12f)
         }
         drawPath(river, Blue, style = Stroke(6.dp.toPx(), cap = StrokeCap.Round))
+
+        // Draw area labels
+        val paint = android.graphics.Paint().apply {
+            textAlign = android.graphics.Paint.Align.CENTER
+            textSize = 12.dp.toPx()
+            color = android.graphics.Color.BLACK
+            typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+        }
+        drawContext.canvas.nativeCanvas.drawText("Hulikere", size.width * 0.3f, size.height * 0.75f, paint)
+        drawContext.canvas.nativeCanvas.drawText("Kudur", size.width * 0.7f, size.height * 0.35f, paint)
+
         val pins = if (overview) {
             listOf(
                 Triple(.20f, .52f, Red), Triple(.35f, .70f, Blue), Triple(.52f, .45f, Green),
@@ -837,5 +1101,42 @@ private fun MapDrawing(modifier: Modifier = Modifier, overview: Boolean = false)
             drawCircle(color, radius = 12.dp.toPx(), center = Offset(size.width * x, size.height * y))
             drawCircle(Color.White, radius = 4.dp.toPx(), center = Offset(size.width * x, size.height * y))
         }
+    }
+}
+
+private fun defaultUserProfile(phone: String = "+91 9876543210") = UserProfile(
+    name = "Ramesh",
+    phone = phone,
+    email = "ramesh@example.com",
+    occupation = "Farmer",
+    village = "Hulikere Village"
+)
+
+private fun saveUserProfile(context: Context, profile: UserProfile) {
+    context.getSharedPreferences("namma_nala_user", Context.MODE_PRIVATE).edit {
+        putString("name", profile.name)
+        putString("phone", profile.phone)
+        putString("email", profile.email)
+        putString("occupation", profile.occupation)
+        putString("village", profile.village)
+        putBoolean("logged_in", true)
+    }
+}
+
+private fun loadUserProfile(context: Context): UserProfile? {
+    val prefs = context.getSharedPreferences("namma_nala_user", Context.MODE_PRIVATE)
+    if (!prefs.getBoolean("logged_in", false)) return null
+    return UserProfile(
+        name = prefs.getString("name", null) ?: return null,
+        phone = prefs.getString("phone", "") ?: "",
+        email = prefs.getString("email", "") ?: "",
+        occupation = prefs.getString("occupation", "") ?: "",
+        village = prefs.getString("village", "") ?: ""
+    )
+}
+
+private fun clearUserProfile(context: Context) {
+    context.getSharedPreferences("namma_nala_user", Context.MODE_PRIVATE).edit {
+        clear()
     }
 }
